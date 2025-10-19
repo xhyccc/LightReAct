@@ -73,3 +73,11 @@ This project is provided under the MIT License — see `LICENSE` for details (or
 
 ---
 If you'd like, I can add a polished `CONTRIBUTING.md`, `LICENSE` (MIT), and a GitHub Actions CI workflow next and push them as a follow-up commit.
+
+## Contact
+
+For questions or collaboration, contact Haoyi Xiong:
+
+- Email: <haoyi.xiong.fr@ieee.org>
+- Personal webpage: https://sites.google.com/site/haoyixiongshomepage/Home
+
