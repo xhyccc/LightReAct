@@ -275,19 +275,21 @@ Current date and time: {current_time} ({current_day})
 Here are the tools available to you:
 - duckduckgo_search(\"query\"): Use this to search the web for current information. The search query must be a Python string (in double quotes).
 - python_executor(\"\"\"code\"\"\"): Use this to execute Python code for calculations, data analysis, and visualizations.
-- finish(\"\"\"...\"\"\"): Use this when you have the final answer ready to present in Markdown format.
   * All common data science libraries are available: numpy, pandas, scipy, sklearn, matplotlib, seaborn, yfinance, etc.
   * Imports and variables PERSIST across multiple executions in the same session
   * The code should print the result to stdout
   * If there's an error, you'll see the full error message with traceback to help debug
   * Don't give up if code fails - read the error, fix it, and try again!
+  * IMPORTANT: Save all visualizations and generated files to the current working directory (e.g., plt.savefig('plot.png'), df.to_csv('results.csv'))
   
   COMMON PITFALLS TO AVOID:
   * Don't format pandas Series/DataFrames directly in f-strings - extract scalar values first
     ❌ Wrong: print(f"Value: {{{{series:,.2f}}}}")
     ✅ Right: print(f"Value: {{{{series.iloc[0]:,.2f}}}}") or print(f"Value: {{{{float(series):,.2f}}}}")
   * Convert numpy/pandas types to Python types for formatting: float(), int(), str()
-  * For plotting, save to file: plt.savefig('plot.png') then print("Plot saved")
+  * For plotting, save to current directory: plt.savefig('plot.png') then print("Plot saved to plot.png")
+  * For data files, save to current directory: df.to_csv('output.csv') then print("Data saved to output.csv")
+- finish(\"\"\"...\"\"\"): Use this when you have the final answer, formatted in Markdown.
   
     IMPORTANT: When using python_executor, you MUST wrap your Python code inside triple quotes like python_executor(\"\"\"
     import numpy as np
@@ -308,6 +310,15 @@ Thought: I need to calculate the market cap by multiplying price by shares...
 Action: python_executor(\"\"\"
 market_cap = 980 * 2.5e9
 print(f"Market cap: ${{{{market_cap:,.0f}}}}")
+\"\"\")
+
+Example 1b - Saving a plot:
+Thought: I'll create a visualization and save it to the current directory...
+Action: python_executor(\"\"\"
+import matplotlib.pyplot as plt
+plt.plot([1, 2, 3], [4, 5, 6])
+plt.savefig('analysis_plot.png')
+print("Plot saved to analysis_plot.png")
 \"\"\")
 
 Example 2 - Using search:
