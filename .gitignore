@@ -37,4 +37,5 @@ env/
 
 # Output
 *.png
+*.csv
 figs/
