@@ -547,6 +547,201 @@ Here is the question: {{question}}
         tool_input = self._get_tool_input(action_string, tool_name=tool_name)
         return tool_name, tool_input
 
+# --- Plan-and-Execute Agent ---
+
+class PlanAndExecuteAgent:
+    """
+    Plan-and-Execute agent for deep research tasks.
+
+    Workflow:
+    1. PLAN:     Use the LLM to decompose the research question into a numbered
+                 list of concrete, actionable sub-tasks.
+    2. EXECUTE:  Run each sub-task through a focused ReAct loop, accumulating
+                 results and passing prior results as context to later steps.
+    3. SYNTHESIZE: Combine all sub-task results into a single, comprehensive
+                 Markdown-formatted answer.
+    """
+
+    def __init__(self, tools: List[callable]):
+        self.tools = tools
+        self._react = ReActAgent(tools=tools)
+
+    # ── Prompt builders ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _planner_prompt(question: str) -> str:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+        return (
+            f"You are an expert research planner. Today is {current_time}.\n\n"
+            "Your task is to break the following research question into a clear, numbered "
+            "list of concrete sub-tasks. Each sub-task must be independently executable "
+            "using web search and/or Python code.\n\n"
+            "Rules:\n"
+            "- Output ONLY a numbered list, no extra commentary.\n"
+            "- Aim for 3–8 focused sub-tasks.\n"
+            "- Each sub-task should be specific and actionable.\n"
+            "- Arrange steps in a logical execution order.\n\n"
+            f"Research Question:\n{question}"
+        )
+
+    @staticmethod
+    def _executor_prompt(overall_question: str, step: str, previous_results: str) -> str:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+        context_section = (
+            f"\nPrevious research results (for context):\n{previous_results}\n"
+            if previous_results.strip()
+            else ""
+        )
+        return (
+            f"You are a focused research assistant. Today is {current_time}.\n\n"
+            f"Overall research goal: {overall_question}\n\n"
+            f"Your CURRENT task: {step}\n"
+            f"{context_section}\n"
+            "Available tools:\n"
+            '- duckduckgo_search("query"): Search the web for current information.\n'
+            '- python_executor("""code"""): Execute Python code for calculations and data analysis.\n'
+            "  * Common data science libraries are available: numpy, pandas, scipy, sklearn,\n"
+            "    matplotlib, seaborn, yfinance, etc.\n"
+            "  * Imports and variables persist across executions within this task.\n"
+            '- finish("""..."""): Use this when you have completed the current task.\n\n'
+            "CRITICAL RESPONSE FORMAT – every turn must have BOTH a Thought and an Action:\n\n"
+            "Thought: [brief reasoning about what to do next]\n"
+            'Action: [duckduckgo_search("...") | python_executor("""...""") | finish("""...""")]\n\n'
+            "Focus exclusively on completing the current task. Call finish() when you have a result.\n\n"
+            f"Current task: {step}\n"
+        )
+
+    @staticmethod
+    def _synthesizer_prompt(question: str, plan: List[str], results: List[str]) -> str:
+        plan_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
+        results_text = "\n\n".join(
+            f"--- Result for Step {i+1}: {plan[i]} ---\n{result}"
+            for i, result in enumerate(results)
+        )
+        return (
+            "You are a research synthesis expert.\n\n"
+            f"Original Question:\n{question}\n\n"
+            f"Research Plan Executed:\n{plan_text}\n\n"
+            f"Individual Step Results:\n{results_text}\n\n"
+            "Please synthesize all of the above research findings into a single, comprehensive, "
+            "well-structured answer in Markdown format. Include all relevant data, analysis, "
+            "insights, and conclusions. Ensure the answer directly addresses the original question."
+        )
+
+    # ── Core methods ─────────────────────────────────────────────────────────────
+
+    def _plan(self, question: str) -> List[str]:
+        """Use the LLM to generate a numbered research plan."""
+        print("\n🗺️  Generating research plan...\n")
+        response = query_llm(self._planner_prompt(question))
+        print(f"Plan:\n{response}\n")
+
+        steps: List[str] = []
+        for line in response.strip().splitlines():
+            line = line.strip()
+            match = re.match(r'^\d+[.)]\s*(.*)', line)
+            if match:
+                step_text = match.group(1).strip()
+                if step_text:
+                    steps.append(step_text)
+
+        if not steps:
+            # Fallback: treat entire response as a single step
+            steps = [response.strip()]
+
+        return steps
+
+    def _execute_step(
+        self,
+        step: str,
+        overall_question: str,
+        previous_results: str,
+        max_steps: int = 15,
+    ) -> str:
+        """Execute a single research step through a focused ReAct loop."""
+        system_prompt = self._executor_prompt(overall_question, step, previous_results)
+        scratchpad = ""
+
+        for i in range(max_steps):
+            print(f"  [sub-step {i+1}]")
+            full_prompt = system_prompt + scratchpad + "\nThought:"
+            llm_response = query_llm(full_prompt).strip()
+
+            thought, action = self._react._parse_llm_response(llm_response)
+            scratchpad += thought
+            scratchpad += f"\nAction: {action}"
+
+            if action.lower().startswith("finish"):
+                result = self._react._get_tool_input(action, tool_name="finish")
+                print("  ✓ Step result obtained.\n")
+                return result
+
+            tool_name, tool_input = self._react._get_tool_name_and_input(action)
+            if tool_name not in self._react.tools:
+                observation = f"Error: Unknown tool '{tool_name}'."
+            else:
+                observation = self._react.tools[tool_name](tool_input)
+
+            preview = observation[:200] + "..." if len(observation) > 200 else observation
+            print(f"  Observation: {preview}\n")
+            scratchpad += f"\nObservation: {observation}"
+
+        return f"(Step exceeded {max_steps} sub-steps. Partial result:\n{scratchpad[-500:]})"
+
+    def run(
+        self,
+        question: str,
+        max_plan_steps: int = 8,
+        max_steps_per_task: int = 15,
+    ) -> str:
+        """
+        Run the plan-and-execute agent.
+
+        Args:
+            question: The research question to answer.
+            max_plan_steps: Maximum number of sub-tasks to include in the plan.
+            max_steps_per_task: Maximum ReAct steps allowed for each sub-task.
+
+        Returns:
+            A comprehensive Markdown-formatted answer.
+        """
+        print(f"\n{'='*60}")
+        print("🧠  Plan-and-Execute Agent")
+        print(f"{'='*60}\n")
+
+        # 1. PLAN
+        plan = self._plan(question)[:max_plan_steps]
+
+        print(f"\n📋  Executing {len(plan)} research steps...\n")
+
+        # 2. EXECUTE each step
+        results: List[str] = []
+        for idx, step in enumerate(plan):
+            print(f"\n{'─'*60}")
+            print(f"🔬  Step {idx+1}/{len(plan)}: {step}")
+            print(f"{'─'*60}")
+
+            previous_results = "\n\n".join(
+                f"Step {i+1} ({plan[i]}): {r}" for i, r in enumerate(results)
+            )
+            result = self._execute_step(
+                step=step,
+                overall_question=question,
+                previous_results=previous_results,
+                max_steps=max_steps_per_task,
+            )
+            results.append(result)
+
+        # 3. SYNTHESIZE
+        print(f"\n{'='*60}")
+        print("📝  Synthesizing final answer...")
+        print(f"{'='*60}\n")
+
+        final_answer = query_llm(self._synthesizer_prompt(question, plan, results))
+        print(f"\nFinal Answer:\n{final_answer}")
+        return final_answer
+
+
 # --- Main Execution ---
 
 if __name__ == "__main__":
