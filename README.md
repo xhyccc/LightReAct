@@ -5,7 +5,11 @@ LightReAct is a small ReAct-style Python agent that demonstrates using an LLM to
 This repository is intended as a compact research / demo project and a starting point for building tool-enabled agents.
 
 ## Features
-- ReAct-style agent loop with explicit Thought/Action format
+- **ReAct mode** — fast, interactive Thought/Action/Observation loop for single-session Q&A
+- **Plan-and-Execute mode** — structured deep-research pipeline:
+  1. *Plan*: LLM decomposes the question into concrete numbered sub-tasks
+  2. *Execute*: each sub-task runs through a focused ReAct loop with accumulated context
+  3. *Synthesize*: all results are merged into a comprehensive Markdown answer
 - Tools included:
   - `duckduckgo_search(query: str)` — lightweight HTML DuckDuckGo search scraper for quick lookups
   - `python_executor(code: str)` — persistent Python execution environment (exec/eval) that captures stdout
@@ -41,8 +45,9 @@ python cli.py
 
 ## Usage
 
-- The agent expects LLM responses to follow an exact format (a Thought and an Action). The README and prompt templates in `react_agent.py` include examples.
-- Tools must be invoked using function-style calls, e.g.:
+### ReAct mode (default)
+
+The agent iterates through Thought → Action → Observation steps until it calls `finish()`.
 
 ```
 Action: python_executor("""
@@ -52,6 +57,38 @@ print('Hello from the executor')
 Action: duckduckgo_search("Tesla stock price today")
 
 Action: finish("""Your final answer in Markdown""")
+```
+
+### Plan-and-Execute mode (deep research)
+
+Activate plan-and-execute mode in the CLI by appending `\ plan` to your question:
+
+```
+> Research the impact of AI on healthcare \ plan
+> Compare OpenAI and Google Gemini capabilities \ plan \ 10
+```
+
+Syntax summary:
+
+| CLI input | Mode | Steps |
+|---|---|---|
+| `question` | ReAct | 30 (default) |
+| `question \ 50` | ReAct | 50 |
+| `question \ plan` | Plan-and-Execute | 15 steps/task (default) |
+| `question \ plan \ 10` | Plan-and-Execute | 10 steps/task |
+
+You can also use `PlanAndExecuteAgent` programmatically:
+
+```python
+from react_agent import PlanAndExecuteAgent, duckduckgo_search, python_executor
+
+agent = PlanAndExecuteAgent(tools=[duckduckgo_search, python_executor])
+answer = agent.run(
+    question="What are the latest breakthroughs in fusion energy?",
+    max_plan_steps=6,       # up to 6 sub-tasks in the plan
+    max_steps_per_task=15,  # up to 15 ReAct steps per sub-task
+)
+print(answer)
 ```
 
 ## Development notes
